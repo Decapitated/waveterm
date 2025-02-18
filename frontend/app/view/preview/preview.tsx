@@ -1004,7 +1004,7 @@ function CodeEditPreview({ model }: SpecializedViewProps) {
         };
     }, []);
 
-    function onMount(editor: MonacoTypes.editor.IStandaloneCodeEditor, monaco: Monaco): () => void {
+    function onMount(editor: MonacoTypes.editor.IStandaloneCodeEditor): () => void {
         model.monacoRef.current = editor;
 
         editor.onKeyDown((e: MonacoTypes.IKeyboardEvent) => {
