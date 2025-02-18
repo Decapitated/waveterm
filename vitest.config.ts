@@ -1,5 +1,6 @@
 import { UserConfig, defineConfig, mergeConfig } from "vitest/config";
 import electronViteConfig from "./electron.vite.config";
+import importMetaUrlPlugin from '@codingame/esbuild-import-meta-url-plugin';
 
 export default mergeConfig(
     electronViteConfig.renderer as UserConfig,
@@ -18,5 +19,15 @@ export default mergeConfig(
                 tsconfig: "tsconfig.json",
             },
         },
+		optimizeDeps: {
+			esbuildOptions: {
+				plugins: [ importMetaUrlPlugin ]
+			},
+			include: [
+				'vscode-textmate',
+				'vscode-oniguruma',
+				'@vscode/vscode-languagedetection'
+			]
+		}
     })
 );

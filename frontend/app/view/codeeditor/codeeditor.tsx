@@ -1,90 +1,101 @@
 // Copyright 2025, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useOverrideConfigAtom } from "@/app/store/global";
+import { getApi, useOverrideConfigAtom } from "@/app/store/global";
 import { boundNumber } from "@/util/util";
 import loader from "@monaco-editor/loader";
 import { Editor, Monaco } from "@monaco-editor/react";
 import type * as MonacoTypes from "monaco-editor/esm/vs/editor/editor.api";
-import { configureMonacoYaml } from "monaco-yaml";
+// import { configureMonacoYaml } from "monaco-yaml";
 import React, { useMemo, useRef } from "react";
 
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import { makeConnRoute } from "@/util/util";
+import * as monaco from 'monaco-editor';
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
-import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
-import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
-import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
-import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import { SchemaEndpoints, getSchemaEndpointInfo } from "./schemaendpoints";
-import ymlWorker from "./yamlworker?worker";
+// import ymlWorker from "./yamlworker?worker";
+
+//#region Extensions
+import "@codingame/monaco-vscode-all-default-extensions";
+//#endregion
+//#region Service Overrides
+import { initialize } from '@codingame/monaco-vscode-api'
+import getBaseServiceOverride from "@codingame/monaco-vscode-base-service-override";
+import getHostServiceOverride from "@codingame/monaco-vscode-host-service-override";
+import getExtensionsServiceOverride from "@codingame/monaco-vscode-extensions-service-override";
+import getFilesServiceOverride from "@codingame/monaco-vscode-files-service-override";
+import getQuickAccessServiceOverride from "@codingame/monaco-vscode-quickaccess-service-override";
+import getNotificationsServiceOverride from "@codingame/monaco-vscode-notifications-service-override";
+import getDialogsServiceOverride from "@codingame/monaco-vscode-dialogs-service-override";
+import getModelServiceOverride from "@codingame/monaco-vscode-model-service-override";
+import getConfigurationServiceOverrride, { updateUserConfiguration } from "@codingame/monaco-vscode-configuration-service-override";
+import getLanguagesServiceOverride from "@codingame/monaco-vscode-languages-service-override";
+import getThemesServiceOverride from "@codingame/monaco-vscode-theme-service-override";
+import getTextmateServiceOverride from "@codingame/monaco-vscode-textmate-service-override";
+import getSnippetsServiceOverride from "@codingame/monaco-vscode-snippets-service-override";
+import getLifeCycleServiceOverride from "@codingame/monaco-vscode-lifecycle-service-override";
+import getLayoutServiceOverride from "@codingame/monaco-vscode-layout-service-override";
+//#endregion
 
 import "./codeeditor.scss";
 
-// there is a global monaco variable (TODO get the correct TS type)
-declare var monaco: Monaco;
+export type WorkerLoader = () => Worker;
+const workerLoaders: Partial<Record<string, WorkerLoader>> = {
+	TextEditorWorker: () => new Worker(new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url), { type: 'module' }),
+	TextMateWorker: () => new Worker(new URL('@codingame/monaco-vscode-textmate-service-override/worker', import.meta.url), { type: 'module' }),
+};
 
 window.MonacoEnvironment = {
-    getWorker(_, label) {
-        if (label === "json") {
-            return new jsonWorker();
-        }
-        if (label === "css" || label === "scss" || label === "less") {
-            return new cssWorker();
-        }
-        if (label === "yaml" || label === "yml") {
-            return new ymlWorker();
-        }
-        if (label === "html" || label === "handlebars" || label === "razor") {
-            return new htmlWorker();
-        }
-        if (label === "typescript" || label === "javascript") {
-            return new tsWorker();
-        }
-        return new editorWorker();
-    },
+    getWorker: function (_workerId, label) {
+		const workerFactory = workerLoaders[label]
+		if (workerFactory != null) {
+			return workerFactory()
+		}
+		throw new Error(`Worker ${label} not found`)
+	}
 };
 
 export async function loadMonaco() {
-    loader.config({ paths: { vs: "monaco" } });
-    await loader.init();
+	try {
+		// overriding Monaco service with VSCode
+		await initialize({
+			...getBaseServiceOverride(),
+            ...getHostServiceOverride(),
+			...getExtensionsServiceOverride(),
+			...getFilesServiceOverride(),
+			...getQuickAccessServiceOverride(),
+			...getNotificationsServiceOverride(),
+			...getDialogsServiceOverride(),
+			...getModelServiceOverride(),
+			...getConfigurationServiceOverrride(),
+			...getLanguagesServiceOverride(),
+			...getThemesServiceOverride(),
+			...getTextmateServiceOverride(),
+			...getSnippetsServiceOverride(),
+			...getLifeCycleServiceOverride(),
+			...getLayoutServiceOverride(),
+		});
 
-    monaco.editor.defineTheme("wave-theme-dark", {
-        base: "vs-dark",
-        inherit: true,
-        rules: [],
-        colors: {
-            "editor.background": "#00000000",
-            "editorStickyScroll.background": "#00000055",
-            "minimap.background": "#00000077",
-            focusBorder: "#00000000",
-        },
-    });
-    monaco.editor.defineTheme("wave-theme-light", {
-        base: "vs",
-        inherit: true,
-        rules: [],
-        colors: {
-            "editor.background": "#fefefe",
-            focusBorder: "#00000000",
-        },
-    });
-    configureMonacoYaml(monaco, {
-        validate: true,
-        schemas: [],
-    });
-    // Disable default validation errors for typescript and javascript
-    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: true,
-    });
-    const schemas = await Promise.all(SchemaEndpoints.map((endpoint) => getSchemaEndpointInfo(endpoint)));
-    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-        validate: true,
-        allowComments: false, // Set to true if you want to allow comments in JSON
-        enableSchemaRequest: true,
-        schemas,
-    });
+		loader.config({ monaco });
+		await loader.init();
+
+		// Disable default validation errors for typescript and javascript
+		monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+			noSemanticValidation: true,
+		});
+		const schemas = await Promise.all(SchemaEndpoints.map((endpoint) => getSchemaEndpointInfo(endpoint)));
+		monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+			validate: true,
+			allowComments: false, // Set to true if you want to allow comments in JSON
+			enableSchemaRequest: true,
+			schemas,
+		});
+	} catch (e) {
+		getApi().sendLog("Load Monaco Error");
+		getApi().sendLog(e);
+	}
 }
 
 function defaultEditorOptions(): MonacoTypes.editor.IEditorOptions {
@@ -156,6 +167,14 @@ export function CodeEditor({ blockId, text, language, filename, fileinfo, meta, 
         console.log("abspath is", absPath);
     }, [absPath]);
 
+	React.useEffect(() => {
+		if (divRef.current) {
+			monaco.editor.create(divRef.current, {
+				...editorOpts,
+			});
+		}
+	}, [divRef]);
+
     function handleEditorChange(text: string, ev: MonacoTypes.editor.IModelContentChangedEvent) {
         if (onChange) {
             onChange(text);
@@ -182,7 +201,7 @@ export function CodeEditor({ blockId, text, language, filename, fileinfo, meta, 
         <div className="code-editor-wrapper">
             <div className="code-editor" ref={divRef}>
                 <Editor
-                    theme={theme}
+                    // theme={theme}
                     value={text}
                     options={editorOpts}
                     onChange={handleEditorChange}
