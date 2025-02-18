@@ -6,7 +6,7 @@ import react from "@vitejs/plugin-react-swc";
 import { defineConfig } from "electron-vite";
 import flow from "rollup-plugin-flow";
 import { ViteImageOptimizer } from "vite-plugin-image-optimizer";
-import { viteStaticCopy } from "vite-plugin-static-copy";
+// import { viteStaticCopy } from "vite-plugin-static-copy";
 import svgr from "vite-plugin-svgr";
 import tsconfigPaths from "vite-tsconfig-paths";
 
@@ -81,9 +81,9 @@ export default defineConfig({
             }),
             react({}),
             tailwindcss(),
-            viteStaticCopy({
-                targets: [{ src: "node_modules/monaco-editor/min/vs/*", dest: "monaco" }],
-            }),
+            // viteStaticCopy({
+            //     targets: [{ src: "node_modules/monaco-editor/esm/vs/*", dest: "monaco" }],
+            // }),
         ],
     },
 });

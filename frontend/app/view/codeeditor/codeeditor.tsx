@@ -1,94 +1,60 @@
 // Copyright 2025, Command Line Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useOverrideConfigAtom } from "@/app/store/global";
+import { getApi, useOverrideConfigAtom } from "@/app/store/global";
 import { boundNumber } from "@/util/util";
-import loader from "@monaco-editor/loader";
-import { Editor, Monaco } from "@monaco-editor/react";
-import type * as MonacoTypes from "monaco-editor/esm/vs/editor/editor.api";
-import { configureMonacoYaml } from "monaco-yaml";
 import React, { useMemo, useRef } from "react";
 
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import { makeConnRoute } from "@/util/util";
-import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
-import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
-import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
-import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
-import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import { SchemaEndpoints, getSchemaEndpointInfo } from "./schemaendpoints";
-import ymlWorker from "./yamlworker?worker";
+
+import * as monaco from 'monaco-editor';
+
+import { Editor } from "@monaco-editor/react";
+import { monacoServiceInit } from "./monaco";
 
 import "./codeeditor.scss";
 
-// there is a global monaco variable (TODO get the correct TS type)
-declare var monaco: Monaco;
+export type WorkerLoader = () => Worker;
+const workerLoaders: Partial<Record<string, WorkerLoader>> = {
+	TextEditorWorker: () => new Worker(new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url), { type: 'module' }),
+	TextMateWorker: () => new Worker(new URL('@codingame/monaco-vscode-textmate-service-override/worker', import.meta.url), { type: 'module' }),
+};
 
 window.MonacoEnvironment = {
-    getWorker(_, label) {
-        if (label === "json") {
-            return new jsonWorker();
-        }
-        if (label === "css" || label === "scss" || label === "less") {
-            return new cssWorker();
-        }
-        if (label === "yaml" || label === "yml") {
-            return new ymlWorker();
-        }
-        if (label === "html" || label === "handlebars" || label === "razor") {
-            return new htmlWorker();
-        }
-        if (label === "typescript" || label === "javascript") {
-            return new tsWorker();
-        }
-        return new editorWorker();
-    },
+    getWorker: function (_workerId, label) {
+		const workerFactory = workerLoaders[label]
+		if (workerFactory != null) {
+			return workerFactory()
+		}
+		throw new Error(`Worker ${label} not found`)
+	}
 };
 
 export async function loadMonaco() {
-    loader.config({ paths: { vs: "monaco" } });
-    await loader.init();
-
-    monaco.editor.defineTheme("wave-theme-dark", {
-        base: "vs-dark",
-        inherit: true,
-        rules: [],
-        colors: {
-            "editor.background": "#00000000",
-            "editorStickyScroll.background": "#00000055",
-            "minimap.background": "#00000077",
-            focusBorder: "#00000000",
-        },
-    });
-    monaco.editor.defineTheme("wave-theme-light", {
-        base: "vs",
-        inherit: true,
-        rules: [],
-        colors: {
-            "editor.background": "#fefefe",
-            focusBorder: "#00000000",
-        },
-    });
-    configureMonacoYaml(monaco, {
-        validate: true,
-        schemas: [],
-    });
-    // Disable default validation errors for typescript and javascript
-    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: true,
-    });
-    const schemas = await Promise.all(SchemaEndpoints.map((endpoint) => getSchemaEndpointInfo(endpoint)));
-    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-        validate: true,
-        allowComments: false, // Set to true if you want to allow comments in JSON
-        enableSchemaRequest: true,
-        schemas,
-    });
+	try {
+		await monacoServiceInit();
+		// Disable default validation errors for typescript and javascript
+		monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+			noSemanticValidation: true,
+		});
+		const schemas = await Promise.all(SchemaEndpoints.map((endpoint) => getSchemaEndpointInfo(endpoint)));
+		monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+			validate: true,
+			allowComments: false, // Set to true if you want to allow comments in JSON
+			enableSchemaRequest: true,
+			schemas,
+		});
+	} catch (e) {
+		getApi().sendLog("Load Monaco Error");
+		getApi().sendLog(e);
+	}
 }
 
-function defaultEditorOptions(): MonacoTypes.editor.IEditorOptions {
-    const opts: MonacoTypes.editor.IEditorOptions = {
+function defaultEditorOptions(): monaco.editor.IEditorOptions {
+    const opts: monaco.editor.IEditorOptions = {
         scrollBeyondLastLine: false,
         fontSize: 12,
         fontFamily: "Hack",
@@ -116,11 +82,10 @@ interface CodeEditorProps {
     language?: string;
     meta?: MetaType;
     onChange?: (text: string) => void;
-    onMount?: (monacoPtr: MonacoTypes.editor.IStandaloneCodeEditor, monaco: Monaco) => () => void;
+    onMount?: (monacoPtr: monaco.editor.IStandaloneCodeEditor) => () => void;
 }
 
 export function CodeEditor({ blockId, text, language, filename, fileinfo, meta, onChange, onMount }: CodeEditorProps) {
-    const divRef = useRef<HTMLDivElement>(null);
     const unmountRef = useRef<() => void>(null);
     const minimapEnabled = useOverrideConfigAtom(blockId, "editor:minimapenabled") ?? false;
     const stickyScrollEnabled = useOverrideConfigAtom(blockId, "editor:stickyscrollenabled") ?? false;
@@ -156,15 +121,15 @@ export function CodeEditor({ blockId, text, language, filename, fileinfo, meta, 
         console.log("abspath is", absPath);
     }, [absPath]);
 
-    function handleEditorChange(text: string, ev: MonacoTypes.editor.IModelContentChangedEvent) {
+    function handleEditorChange(text: string, ev: monaco.editor.IModelContentChangedEvent) {
         if (onChange) {
             onChange(text);
         }
     }
 
-    function handleEditorOnMount(editor: MonacoTypes.editor.IStandaloneCodeEditor, monaco: Monaco) {
+    function handleEditorOnMount(editor: monaco.editor.IStandaloneCodeEditor) {
         if (onMount) {
-            unmountRef.current = onMount(editor, monaco);
+            unmountRef.current = onMount(editor);
         }
     }
 
@@ -180,16 +145,15 @@ export function CodeEditor({ blockId, text, language, filename, fileinfo, meta, 
 
     return (
         <div className="code-editor-wrapper">
-            <div className="code-editor" ref={divRef}>
-                <Editor
-                    theme={theme}
-                    value={text}
-                    options={editorOpts}
-                    onChange={handleEditorChange}
-                    onMount={handleEditorOnMount}
-                    path={absPath}
-                    language={language}
-                />
+            <div className="code-editor">
+				<Editor 
+					theme={theme}
+					value={text}
+					options={editorOpts}
+					onChange={handleEditorChange}
+					onMount={handleEditorOnMount}
+					path={absPath} 
+					language={language} />
             </div>
         </div>
     );
